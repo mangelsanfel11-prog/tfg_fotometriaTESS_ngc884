@@ -1,5 +1,5 @@
 # =============================================================================
-# SCRIPT DE PROCESAMIENTO EN LOTE (BATCH PROCESSING) - EDICIÓN ANTIGRAVITY
+#         SCRIPT DE PROCESAMIENTO EN LOTE (BATCH PROCESSING)
 # PROCESA TODAS LAS ESTRELLAS EN Datos_sector Y GUARDA EN Resultados_sector
 # =============================================================================
 
@@ -8,7 +8,6 @@ import re
 import numpy as np
 import pandas as pd
 import matplotlib
-# Configurar matplotlib para que no intente abrir ventanas gráficas (modo batch)
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import lightkurve as lk
@@ -44,7 +43,7 @@ RECORTE_BORDES_DIAS = 0.3   # Días a recortar en cada borde de cada órbita (t�
 MAX_ITER = 30               # Límite máximo de iteraciones
 SNR_UMBRAL = 4.0            # Criterio de parada clásico (Breger et al. 1993)
 USAR_PARADA_SNR = True      # True para detenerse cuando S/N < SNR_UMBRAL, False para correr siempre MAX_ITER
-ITER_LIMPIEZA = 2           # Frecuencias iniciales forzadas para limpiar derivas (bajada a 2 por petición)
+ITER_LIMPIEZA = 2           # Frecuencias iniciales forzadas para limpiar derivas
 FREQ_LIMITE_DERIVA = 0.35     # Frecuencias inferiores a este valor (en d^-1) son tratadas como deriva
 
 global_resumen_limpieza = []  # Lista global para acumular los logs de descarte de puntos
@@ -118,21 +117,16 @@ def extraer_metadatos_fits(ruta_fits):
     except Exception as e:
         print(f"  [Advertencia] No se pudieron leer cabeceras de {nombre_archivo}: {e}")
         
-    # Procesar/Limpiar nombre del objeto
-    # Si viene de cabeceras
     if object_name:
         object_name = str(object_name).strip()
         if object_name.isdigit():
             object_name = f"WEBDA_{object_name}"
         object_name = re.sub(r'[\s\-]+', '_', object_name)
     else:
-        # Deducir del nombre del archivo (ej. SAP_2139_clean.fits -> WEBDA_2139)
-        # Buscar patrones numéricos típicos de WEBDA
         match_webda = re.search(r'(?:SAP|WEBDA|NGC\d+)_(\d+)', nombre_base, re.IGNORECASE) or re.search(r'\b(\d{3,5})\b', nombre_base)
         if match_webda:
             object_name = f"WEBDA_{match_webda.group(1)}"
         else:
-            # Buscar patrones de TIC ID
             match_tic = re.search(r'\b(TIC|TICID)_?(\d+)\b', nombre_base, re.IGNORECASE) or re.search(r'\b(\d{7,10})\b', nombre_base)
             if match_tic:
                 val = match_tic.group(2) if match_tic.lastindex else match_tic.group(0)
@@ -273,7 +267,6 @@ def procesar_estrella(ruta_fits):
             lc_seg_flat = lc_seg.copy()
             lc_seg_flat.flux = lc_seg_flat.flux - 1.0
             
-        # Recortar los extremos de la órbita para eliminar derivas y artefactos de borde del SG
         if RECORTAR_BORDES:
             t_seg = lc_seg_flat.time.value
             t_min = t_seg[0]
@@ -348,12 +341,10 @@ def procesar_estrella(ruta_fits):
     resultados = []
     
     for i in range(MAX_ITER):
-        # Espectro residual
         ls = LombScargle(tiempo, flujo_residual, errores_flujo)
         frecuencias, potencias = ls.autopower(minimum_frequency=0.01, maximum_frequency=30.0)
         amplitudes = np.sqrt(2) * np.std(flujo_residual) * np.sqrt(potencias)
         
-        # Encontrar todos los picos locales en el espectro de amplitudes
         from scipy.signal import find_peaks
         idx_picos, _ = find_peaks(amplitudes, distance=10)
         
@@ -371,7 +362,6 @@ def procesar_estrella(ruta_fits):
             snrs.append(ap / ruido_p)
         snrs = np.array(snrs)
         
-        # Seleccionar el pico con la mayor relación S/N (replica el criterio visual de Period04)
         idx_mejor = np.argmax(snrs)
         freq_pico = freqs_picos[idx_mejor]
         ruido_fisico = evaluar_ruido_local_saesen(frecuencias, amplitudes, freq_pico)
@@ -403,7 +393,6 @@ def procesar_estrella(ruta_fits):
             lower_bounds.extend([0.0, f_min, -np.inf])
             upper_bounds.extend([np.inf, f_max, np.inf])
             
-        # Intentar optimización multisenoidal global
         try:
             popt, pcov = curve_fit(modelo_multisenoidal, tiempo, flujo, p0=p0, 
                                    sigma=errores_flujo, absolute_sigma=True,
@@ -413,7 +402,6 @@ def procesar_estrella(ruta_fits):
             print(f"        Iter {i+1:02d}: Ajuste simultáneo no convergió. Deteniendo prewhitening.")
             break
             
-        # Reconstruir variables con valores optimizados
         offset_global = popt[0]
         frecuencias_detectadas = []
         amplitudes_detectadas = []
@@ -482,12 +470,10 @@ def procesar_estrella(ruta_fits):
         ax2.legend()
         plt.tight_layout()
         
-        # Guardar gráfico con el formato solicitado: WEBDA_S(Numero del sector)_Periodograma_I(Numero de la iteracion)
         ruta_grafico = os.path.join(SUBDIR_GRAFICOS, f"{object_name}_S{sector}_Periodograma_I{i+1}.png")
         fig.savefig(ruta_grafico, dpi=300)
         plt.close(fig)
         
-        # Registrar resultado
         resultados.append({
             'Iteración': i + 1,
             'Tipo': estado,
@@ -500,7 +486,6 @@ def procesar_estrella(ruta_fits):
             'S/N': round(snr_final, 2)
         })
         
-    # Guardar resultados en CSV con formato solicitado: WEBDA_S(Numero del sector)_FreqTabPhy.csv
     if resultados:
         df_res = pd.DataFrame(resultados)
         ruta_tabla = os.path.join(SUBDIR_TABLAS, f"{object_name}_S{sector}_FreqTabPhy.csv")
@@ -538,7 +523,6 @@ def ejecutar_procesamiento_lote():
         ruta_fits = os.path.join(DIR_DATOS, archivo)
         procesar_estrella(ruta_fits)
         
-    # Guardar resumen en archivo de texto
     if global_resumen_limpieza:
         ruta_resumen = os.path.join(DIR_RESULTADOS, "resumen_limpieza.txt")
         with open(ruta_resumen, "w", encoding="utf-8") as f:
